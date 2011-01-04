@@ -1,3 +1,9 @@
+2011-01-04  gettextize  <bug-gnu-gettext@gnu.org>
+
+	* Makefile.in.in: Upgrade to gettext-0.18.1.
+	* cat-id-tbl.c: Remove file.
+	* stamp-cat-id: Remove file.
+
 2008-03-09  gettextize  <bug-gnu-gettext@gnu.org>
 
 	* Rules-quot: New file, from gettext-0.17.

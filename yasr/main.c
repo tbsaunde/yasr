@@ -1376,12 +1376,10 @@ int isctty()
 #endif
 
 char charmap[64]="ASCII";
-int main(int argc, char *argv[])
-{
-  struct winsize winsz = { 0, 0 };
-  int flag = 1;
 
   /* initialize gettext */
+void init_localization(void)
+{
 #ifdef ENABLE_NLS
   setlocale(LC_ALL, "");
   bindtextdomain(PACKAGE, LOCALEDIR);
@@ -1392,10 +1390,15 @@ int main(int argc, char *argv[])
   	fprintf(stderr,"Codeset %s not supported\n",charmap);
 	exit(1);
   }
-  
-  	
 #endif
+}
 
+int main(int argc, char *argv[])
+{
+  struct winsize winsz = { 0, 0 };
+  int flag = 1;
+
+  init_localization();
   if (argv[0][0] == '-') shell = 1;
   if (isatty(0))
   {
