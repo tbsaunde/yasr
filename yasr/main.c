@@ -375,22 +375,9 @@ static void win_scrollup()
 
 static void win_lf()
 {
-  int i;
-  chartype *tmpc;
 
-  if (win->cr == win_scrollmax)
-  {
-    if (rev.cr) rev.cr--;
-    if (oldcr) oldcr--;
-    tmpc = win->row[win_scrollmin];
-    (void) memset(tmpc, 0, win->cols * CHARSIZE);
-    for (i = win_scrollmin; i < win_scrollmax; i++)
-    {
-      win->row[i] = win->row[i + 1];
-    }
-    win->row[i] = tmpc;
-    win->cr--;
-  }
+  if (win->cr == win_scrollmax) win_scrollup();
+
   win->cr++;
 }
 
@@ -410,7 +397,8 @@ static void win_scrolldown()
 
 static void win_rlf()
 {
-  if (win->cr == win_scrollmin) win_scrolldown(); else win->cr--;
+  if (win->cr == win_scrollmin) win_scrolldown();
+  else win->cr--;
 }
 
 int readable(int fd, int wait)
