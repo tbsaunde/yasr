@@ -60,16 +60,21 @@ static int shell = 0;
 int special = 0;
 int cl_synth = 0;
 int cl_synthport = 0;
+static int bytes_left;
+static char *bytes_left_start;
 
 static char **subprog = NULL;	/* if non-NULL, then exec it instead of shell */
 
 static Win *wininit(int, int);
 static void win_end(Win *);
 
+static void getoutput();
+
 extern char **environ;
 
 #define PARM1 (parm[0] ? parm[0] : 1)
 #define PARM2 (parm[1] ? parm[1] : 1)
+#define MIN(a, b) ((a)>(b)? (b): (a))
 
 static void yasr_ttyname_r(int fd, char *p, int size)
 {
@@ -77,51 +82,6 @@ static void yasr_ttyname_r(int fd, char *p, int size)
 
   if ((t = ttyname(fd)) == NULL) strcpy(p, "stdin");
   else (void) strncpy(p, t, size);
-}
-
-static void child()
-{
-  char arg[20];
-  char *cp;
-  char envstr[40];
-
-  (void) login_tty(slave);
-  if (!geteuid())
-  {				/* if we're setuid root */
-    yasr_ttyname_r(0, (char *) buf, 32);
-    (void) chown((char *) buf, getuid(), -1);
-    (void) setuid(getuid());
-  }
-  cp = usershell + strlen(usershell) - 1;
-  while (*cp != '/')
-  {
-    cp--;
-  }
-  cp++;
-  arg[0] = shell ? '-' : '\0';
-  *(arg + 1) = '\0';
-  (void) strcat(arg, cp);
-  (void) sprintf(envstr, "SHELL=%s", usershell);
-  (void) putenv(envstr);
-  if (subprog)
-  {
-    char *devname = ttyname(0);
-
-    (void) setsid();
-    (void) close(0);
-    if (open(devname, O_RDWR) < 0)
-    {
-      perror(devname);
-    }
-
-    (void) execve(subprog[0], subprog, environ);
-  }
-  else
-  {
-    (void) execl(usershell, arg, (void *) 0);
-  }
-  perror("execl");
-  exit(1);
 }
 
 /* get the appropriate name for a tty from the filename */
@@ -231,8 +191,6 @@ static void utmpconv(char *s, char *d, int pid)
   exit(0);
 }
 
-static void getoutput();
-
 /*ARGSUSED*/ static void child_finish(int sig)
 {
   int pid = 0;
@@ -334,59 +292,52 @@ static int getkey_buf()
   return key;
 }
 
-static void getinput()
+static Win *wininit(int nr, int nc)
 {
-  int key;
+  int i;
+  Win *win;
 
-  size = read(0, buf, 255);
-  if (size <= 0)
+  win = (Win *) calloc(sizeof(Win), 1);
+  if (!win)
   {
-    finish(0);
+    fprintf(stderr, "wininit: cannot allocate %lu bytes\n",
+	    (unsigned long) sizeof(Win));
+    exit(1);
   }
-  key = getkey_buf();
-  if (key == ui.disable)
+  win->rows = nr;
+  win->cols = nc;
+  win->row = (chartype **) malloc(win->rows * sizeof(chartype *));
+  win->cr = win->cc = 0;
+  for (i = 0; i < win->rows; i++)
   {
-    if (ui.disabled)
+    win->row[i] = (chartype *) calloc(win->cols, CHARSIZE);
+    if (!win->row[i])
     {
-      tts_initsynth(NULL);
-      ui.disabled = ui.silent = 0;
-      tts_say(_("yasr enabled."));
+      fprintf(stderr, "wininit: cannot allocate row %d\n", i);
+      exit(1);
     }
-    else
-    {
-      tts_silence();
-      tts_say(_("yasr disabled."));
-      ui.silent = ui.disabled = 1;
-    }
-    return;
   }
-  else if (ui.disabled)
+  win->savecp.cr = win->savecp.cc = 0;
+  win->tab = (char *) calloc(win->cols, 1);
+  if (!win->tab)
   {
-    (void) write(master, buf, size);
-    return;
+    fprintf(stderr, "wininit: cannot allocate win->tab\n");
+    exit(1);
   }
+  for (i = 0; i < win->cols; i += 8) win->tab[i] = 1;
+  return (win);
+}
 
-  tts_silence();
-  if (ui.silent == -1)
+static void win_end(Win * win)
+{
+  int i;
+
+  for (i = 0; i < win->rows; i++)
   {
-    ui.silent = 0;
+    free(win->row[i]);
   }
-  ui.silent = -ui.silent;
-  if (ui.meta)
-  {
-    (void) write(master, buf, size);
-    ui.meta = 0;
-    return;
-  }
-  if (ui.kbsay == 2 && is_separator(key))
-  {
-    tts_out_w(okbuf, okbuflen);
-    okbuflen = tts.oflag = 0;
-  }
-  if (!ui_keypress(key))
-  {
-    (void) write(master, buf, size);
-  }
+  free(win->row);
+  free(win->tab);
 }
 
 static void wincpy(Win ** d, Win * s)
@@ -403,18 +354,6 @@ static void wincpy(Win ** d, Win * s)
     (void) memcpy((*d)->row[i], s->row[i], s->cols * CHARSIZE);
   }
   (void) memcpy(&(*d)->savecp, &s->savecp, sizeof(Curpos));
-}
-
-static void win_end(Win * win)
-{
-  int i;
-
-  for (i = 0; i < win->rows; i++)
-  {
-    free(win->row[i]);
-  }
-  free(win->row);
-  free(win->tab);
 }
 
 static void win_scrollup()
@@ -522,8 +461,6 @@ static char *oldgulp(unsigned char *buf, int *size, unsigned char *cp, unsigned 
 function reads portion of data into buf and converts
 to wide string, leaving 'leave' character in wide_buf;
 */
-static int bytes_left;
-static char *bytes_left_start;
 static void read_buf(int leave)
 {
   char *b1,*b2;
@@ -567,6 +504,7 @@ static void read_buf(int leave)
   wsize=(wchar_t*)b2 - wide_buf;
   wide_buf[wsize]=0;
 }
+
 static wchar_t *gulp(wchar_t *cp, wchar_t **ep)
 {
   int leave;
@@ -605,7 +543,6 @@ static void kbsay()
   }
 }
 
-#define MIN(a, b) ((a)>(b)? (b): (a))
 static long strwtol(wchar_t **p)
 {
   long t=0;
@@ -1028,6 +965,61 @@ static int firstword(int cr, int cc)
   return (1);
 }
 
+static void getinput()
+{
+  int key;
+
+  size = read(0, buf, 255);
+  if (size <= 0)
+  {
+    finish(0);
+  }
+  key = getkey_buf();
+  if (key == ui.disable)
+  {
+    if (ui.disabled)
+    {
+      tts_initsynth(NULL);
+      ui.disabled = ui.silent = 0;
+      tts_say(_("yasr enabled."));
+    }
+    else
+    {
+      tts_silence();
+      tts_say(_("yasr disabled."));
+      ui.silent = ui.disabled = 1;
+    }
+    return;
+  }
+  else if (ui.disabled)
+  {
+    (void) write(master, buf, size);
+    return;
+  }
+
+  tts_silence();
+  if (ui.silent == -1)
+  {
+    ui.silent = 0;
+  }
+  ui.silent = -ui.silent;
+  if (ui.meta)
+  {
+    (void) write(master, buf, size);
+    ui.meta = 0;
+    return;
+  }
+  if (ui.kbsay == 2 && is_separator(key))
+  {
+    tts_out_w(okbuf, okbuflen);
+    okbuflen = tts.oflag = 0;
+  }
+  if (!ui_keypress(key))
+  {
+    (void) write(master, buf, size);
+  }
+}
+
 static void getoutput()
 {
   wchar_t ch = 0;
@@ -1316,6 +1308,51 @@ static void get_tts_input()
   (void) read(tts.fd, buf, 100);
 }
 
+static void child()
+{
+  char arg[20];
+  char *cp;
+  char envstr[40];
+
+  (void) login_tty(slave);
+  if (!geteuid())
+  {				/* if we're setuid root */
+    yasr_ttyname_r(0, (char *) buf, 32);
+    (void) chown((char *) buf, getuid(), -1);
+    (void) setuid(getuid());
+  }
+  cp = usershell + strlen(usershell) - 1;
+  while (*cp != '/')
+  {
+    cp--;
+  }
+  cp++;
+  arg[0] = shell ? '-' : '\0';
+  *(arg + 1) = '\0';
+  (void) strcat(arg, cp);
+  (void) sprintf(envstr, "SHELL=%s", usershell);
+  (void) putenv(envstr);
+  if (subprog)
+  {
+    char *devname = ttyname(0);
+
+    (void) setsid();
+    (void) close(0);
+    if (open(devname, O_RDWR) < 0)
+    {
+      perror(devname);
+    }
+
+    (void) execve(subprog[0], subprog, environ);
+  }
+  else
+  {
+    (void) execl(usershell, arg, (void *) 0);
+  }
+  perror("execl");
+  exit(1);
+}
+
 static void parent()
 {
   fd_set rf;
@@ -1472,43 +1509,6 @@ int main(int argc, char *argv[])
   perror("fork");
   return -1;
 }
-
-static Win *wininit(int nr, int nc)
-{
-  int i;
-  Win *win;
-
-  win = (Win *) calloc(sizeof(Win), 1);
-  if (!win)
-  {
-    fprintf(stderr, "wininit: cannot allocate %lu bytes\n",
-	    (unsigned long) sizeof(Win));
-    exit(1);
-  }
-  win->rows = nr;
-  win->cols = nc;
-  win->row = (chartype **) malloc(win->rows * sizeof(chartype *));
-  win->cr = win->cc = 0;
-  for (i = 0; i < win->rows; i++)
-  {
-    win->row[i] = (chartype *) calloc(win->cols, CHARSIZE);
-    if (!win->row[i])
-    {
-      fprintf(stderr, "wininit: cannot allocate row %d\n", i);
-      exit(1);
-    }
-  }
-  win->savecp.cr = win->savecp.cc = 0;
-  win->tab = (char *) calloc(win->cols, 1);
-  if (!win->tab)
-  {
-    fprintf(stderr, "wininit: cannot allocate win->tab\n");
-    exit(1);
-  }
-  for (i = 0; i < win->cols; i += 8) win->tab[i] = 1;
-  return (win);
-}
-
 
 void w_speak(wchar_t *ibuf,int len)
 {
