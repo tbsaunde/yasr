@@ -173,6 +173,12 @@ static void utmpconv(char *s, char *d, int pid)
 #endif
 }
 
+/* thin wrapper to call tts_silence on some signals */
+static void sig_silence(int sig)
+{
+	tts_silence();
+}
+
  /*ARGSUSED*/ static void finish(int sig)
 {
   tts_end();
@@ -1490,6 +1496,7 @@ int main(int argc, char *argv[])
 
   (void) openpty(&master, &slave, NULL, NULL, &winsz);
   (void) signal(SIGCHLD, &child_finish);
+  (void) signal(SIGUSR1, &sig_silence);
   (void) tcgetattr(0, &t);
   cpid = fork();
   if (cpid > 0) parent();
