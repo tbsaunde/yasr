@@ -1426,6 +1426,7 @@ void init_localization(void)
 
 int main(int argc, char *argv[])
 {
+	struct sigaction sig_handle;
   struct winsize winsz = { 0, 0 };
   int flag = 1;
 
@@ -1446,6 +1447,7 @@ int main(int argc, char *argv[])
   winsave = NULL;
   uinit();
   (void) memset(&tts, 0, sizeof(Tts));
+  memset(&sig_handle, 0, sizeof(struct sigaction));
   opt_init();
   (void) memset(voices, 0, sizeof(voices));
   while (flag)
@@ -1495,8 +1497,11 @@ int main(int argc, char *argv[])
 #endif
 
   (void) openpty(&master, &slave, NULL, NULL, &winsz);
-  (void) signal(SIGCHLD, &child_finish);
-  (void) signal(SIGUSR1, &sig_silence);
+  sig_handle.sa_flags = SA_RESTART;
+  sig_handle.sa_handler = child_finish;
+  sigaction(SIGCHLD, &sig_handle, NULL);
+  sig_handle.sa_handler = sig_silence;
+  sigaction(SIGUSR1, &sig_handle, NULL);
   (void) tcgetattr(0, &t);
   cpid = fork();
   if (cpid > 0) parent();
